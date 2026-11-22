@@ -1,0 +1,17 @@
+# Правило udev для omarchy-input-kit.
+#
+# Даёт текущему пользователю доступ к hidraw-интерфейсам мыши Zelotes C-18
+# (12c9:2003) и клавиатуры DEXP First Blood (1a2c:635a) через ACL uaccess.
+# После установки правила инструменты (evtest, od, keyd и т. п.) работают
+# без root, пока пользователь сидит в графической сессии.
+#
+# Установка:
+#   sudo install -Dm644 devices/udev/99-input-kit.rules /etc/udev/rules.d/99-input-kit.rules
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --subsystem-match=hidraw
+#
+# Проверка:
+#   getfacl -p /dev/hidraw0
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="12c9", ATTRS{idProduct}=="2003", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1a2c", ATTRS{idProduct}=="635a", TAG+="uaccess"

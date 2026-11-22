@@ -324,8 +324,10 @@ class RussianArgumentParser(argparse.ArgumentParser):
 
     def format_help(self):
         text = super().format_help()
-        return text.replace("options:", "параметры:").replace(
-            "show this help message and exit", "показать эту справку"
+        return (
+            text.replace("usage:", "использование:", 1)
+            .replace("options:", "параметры:")
+            .replace("show this help message and exit", "показать эту справку")
         )
 
     def error(self, message):

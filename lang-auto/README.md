@@ -29,8 +29,10 @@ systemctl --user enable --now lang-auto.service
 ./verify.sh
 ```
 
-Скрипт проверяет раскладки, клавиатуры, статус службы, event-сокет и
-`--dry-run`. Итог: `ИТОГ: OK` или `ИТОГ: FAIL (N)`.
+Скрипт проверяет `python3 -m py_compile`, русскую справку, `--once` на живом
+Hyprland, `--dry-run` без Traceback и unit-файл. Состояние установленной
+службы выводится отдельно: неактивная служба даёт предупреждение, а не FAIL.
+Итог: `lang-auto: OK` или `lang-auto: FAIL`.
 
 Ручная проверка:
 

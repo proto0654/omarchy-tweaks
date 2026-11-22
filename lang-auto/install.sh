@@ -5,7 +5,8 @@ set -euo pipefail
 readonly UNIT_NAME="lang-auto.service"
 readonly BIN_DIR="${HOME}/.local/bin"
 readonly UNIT_DIR="${HOME}/.config/systemd/user"
-readonly SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+readonly SRC_DIR
 
 usage() {
     cat <<'EOF'
