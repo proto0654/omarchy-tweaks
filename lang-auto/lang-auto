@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""lang-auto — английская раскладка при открытии меню Omarchy и терминалов.
+
+Демон слушает event-сокет Hyprland и переключает клавиатуру на первую
+раскладку из input:kb_layout (обычно us), когда открывается меню Omarchy
+(layer surface) или новое окно терминала.
+"""
+
+import argparse
+import json
+import logging
+import os
+import socket
+import stat
+import subprocess
+import sys
+import time
+
+# Классы окон, которые считаем терминалами. Сравнение регистронезависимое,
+# по подстроке: Omarchy может запускать footclient и подобные варианты.
+TERMINAL_CLASSES = (
+    "foot",
+    "alacritty",
+    "kitty",
+    "org.wezfurlong.wezterm",
+    "com.mitchellh.ghostty",
+    "ghostty",
+)
+
+# Слова в namespace layer surface, которые означают меню Omarchy.
+MENU_NAMESPACES = ("menu", "omarchy")
+
+# Раскладка по умолчанию, если input:kb_layout пуст.
+DEFAULT_LAYOUT = "us"
+
+# Пауза перед переподключением к сокету Hyprland.
+RECONNECT_DELAY = 2.0
+
+# Таймаут на один вызов hyprctl.
+HYPRCTL_TIMEOUT = 5.0
+
+log = logging.getLogger("lang-auto")
+
+
+def socket_path():
+    """Вернуть путь к event-сокету Hyprland."""
+    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "").strip()
+    if not signature:
+        raise RuntimeError("переменная HYPRLAND_INSTANCE_SIGNATURE не задана")
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    if not runtime_dir:
+        runtime_dir = f"/run/user/{os.getuid()}"
+    return os.path.join(runtime_dir, "hypr", signature, ".socket2.sock")
+
+
+def hyprctl(*args):
+    """Выполнить hyprctl и вернуть результат запуска."""
+    return subprocess.run(
+        ["hyprctl", *args],
+        capture_output=True,
+        text=True,
+        timeout=HYPRCTL_TIMEOUT,
+        check=False,
+    )
+
+
+def hyprctl_json(*args):
+    """Выполнить hyprctl с -j и разобрать JSON."""
+    result = hyprctl("-j", *args)
+    if result.returncode != 0:
+        details = result.stderr.strip() or f"код возврата {result.returncode}"
+        raise RuntimeError(f"hyprctl {' '.join(args)}: {details}")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"не удалось разобрать JSON от hyprctl: {exc}") from exc
+
+
+def target_layout():
+    """Первая раскладка из input:kb_layout (us,ru -> us)."""
+    data = hyprctl_json("getoption", "input:kb_layout")
+    value = (data.get("str") or "").strip()
+    first = value.split(",")[0].strip()
+    return first or DEFAULT_LAYOUT
+
+
+def keymap_matches(active_keymap, target):
+    """Совпадает ли активная раскладка с целевой (по началу строки)."""
+    active = (active_keymap or "").strip().lower()
+    target = target.lower()
+    if not active:
+        return False
+    if active.startswith(target):
+        return True
+    # Hyprland отдаёт в active_keymap человекочитаемое имя («English (US)»),
+    # а не код «us», поэтому отдельно узнаём английские названия.
+    return target in ("us", "en") and active.startswith("english")
+
+
+def layout_already_active(target):
+    """Все клавиатуры уже переключены на целевую раскладку."""
+    data = hyprctl_json("devices")
+    keymaps = [k.get("active_keymap") for k in data.get("keyboards") or []]
+    keymaps = [k for k in keymaps if k]
+    return bool(keymaps) and all(keymap_matches(k, target) for k in keymaps)
+
+
+def switch_layout(target):
+    """Переключить все клавиатуры на target, при отказе — по индексу 0."""
+    result = hyprctl("switchxkblayout", "all", target)
+    stderr = (result.stderr or "").lower()
+    if result.returncode == 0 and "invalid" not in stderr:
+        return
+    # Hyprland не принял имя раскладки — пробуем индекс 0.
+    fallback = hyprctl("switchxkblayout", "all", "0")
+    if fallback.returncode != 0:
+        details = (
+            fallback.stderr.strip()
+            or result.stderr.strip()
+            or f"код возврата {fallback.returncode}"
+        )
+        raise RuntimeError(f"hyprctl switchxkblayout: {details}")
+
+
+class LangAuto:
+    """Обработка событий Hyprland и переключение раскладки."""
+
+    def __init__(self, dry_run=False):
+        self.dry_run = dry_run
+        # Классы событий, по которым ошибка уже напечатана.
+        self._reported_errors = set()
+
+    def _report_error_once(self, event_class, message):
+        """Напечатать ошибку один раз на класс события."""
+        if event_class in self._reported_errors:
+            return
+        self._reported_errors.add(event_class)
+        log.error("%s", message)
+
+    def _switch_for(self, event_class, label):
+        """Переключить раскладку для события, если это ещё нужно."""
+        try:
+            target = target_layout()
+            if layout_already_active(target):
+                log.debug("раскладка уже %s (class=%s), пропускаю", target, label)
+                return
+            if self.dry_run:
+                print(f"переключил бы на {target} (class={label})", flush=True)
+                return
+            switch_layout(target)
+            log.info("переключил на %s (class=%s)", target, label)
+            self._reported_errors.discard(event_class)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            self._report_error_once(
+                event_class, f"{event_class}: ошибка переключения раскладки: {exc}"
+            )
+
+    def handle_line(self, line):
+        """Разобрать одну строку event-сокета."""
+        line = line.strip()
+        if not line or ">>" not in line:
+            return
+        event, data = line.split(">>", 1)
+        log.debug("событие: %s", line)
+
+        if event == "openwindow":
+            # openwindow>>ADDR,WORKSPACE,CLASS,TITLE (в TITLE могут быть запятые)
+            parts = data.split(",", 3)
+            if len(parts) < 3:
+                return
+            window_class = parts[2]
+            if any(t in window_class.lower() for t in TERMINAL_CLASSES):
+                self._switch_for("openwindow", window_class)
+        elif event == "openlayer":
+            namespace = data.split(",", 1)[0]
+            if any(m in namespace.lower() for m in MENU_NAMESPACES):
+                self._switch_for("openlayer", namespace)
+
+    def _read_loop(self, connection):
+        """Читать строки из сокета, пока он не закроется."""
+        buffer = b""
+        while True:
+            chunk = connection.recv(65536)
+            if not chunk:
+                raise ConnectionError("сокет закрыт")
+            buffer += chunk
+            while b"\n" in buffer:
+                raw, buffer = buffer.split(b"\n", 1)
+                self.handle_line(raw.decode("utf-8", errors="replace"))
+
+    def run(self):
+        """Основной цикл: подключение, чтение событий, переподключение."""
+        announced_down = False
+        while True:
+            try:
+                path = socket_path()
+            except RuntimeError as exc:
+                self._report_error_once("socket", f"нет сокета Hyprland: {exc}")
+                time.sleep(RECONNECT_DELAY)
+                continue
+
+            connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                connection.connect(path)
+            except OSError as exc:
+                connection.close()
+                if not announced_down:
+                    log.warning(
+                        "не удалось подключиться к %s (%s); переподключаюсь",
+                        path,
+                        exc,
+                    )
+                    announced_down = True
+                time.sleep(RECONNECT_DELAY)
+                continue
+
+            announced_down = False
+            self._reported_errors.discard("socket")
+            log.info("подключился к %s", path)
+            try:
+                self._read_loop(connection)
+            except (OSError, ConnectionError) as exc:
+                log.warning("соединение с Hyprland потеряно (%s); переподключаюсь", exc)
+            finally:
+                connection.close()
+            time.sleep(RECONNECT_DELAY)
+
+
+def check_environment():
+    """Режим --once: проверить окружение и вернуть код выхода."""
+    problems = 0
+
+    def report(ok, message):
+        nonlocal problems
+        if ok:
+            print(f"[OK] {message}")
+        else:
+            print(f"[ОШИБКА] {message}")
+            problems += 1
+
+    try:
+        path = socket_path()
+        exists = os.path.exists(path) and stat.S_ISSOCK(os.stat(path).st_mode)
+        report(exists, f"event-сокет: {path}")
+    except (RuntimeError, OSError) as exc:
+        report(False, f"event-сокет: {exc}")
+
+    try:
+        result = hyprctl("version")
+        if result.returncode == 0:
+            report(True, "hyprctl доступен")
+        else:
+            report(False, f"hyprctl завершился с кодом {result.returncode}")
+    except (OSError, subprocess.SubprocessError) as exc:
+        report(False, f"hyprctl недоступен: {exc}")
+
+    try:
+        data = hyprctl_json("getoption", "input:kb_layout")
+        value = (data.get("str") or "").strip()
+        first = value.split(",")[0].strip()
+        if first:
+            report(True, f"раскладки: {value} (целевая: {first})")
+        else:
+            report(False, "input:kb_layout пуст, будет использована us")
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        report(False, f"не удалось прочитать input:kb_layout: {exc}")
+
+    return 0 if problems == 0 else 1
+
+
+def build_parser():
+    """Аргументы командной строки."""
+    parser = argparse.ArgumentParser(
+        prog="lang-auto",
+        description=(
+            "Переключает клавиатуру на английскую раскладку при открытии "
+            "меню Omarchy и новых терминалов."
+        ),
+        epilog=(
+            "Раскладка берётся из первой записи input:kb_layout (обычно us). "
+            "Без флагов утилита работает как демон."
+        ),
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="проверить окружение (сокет, hyprctl, раскладки) и выйти",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="только печатать, что было бы переключено, ничего не менять",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="журнал каждого события",
+    )
+    return parser
+
+
+def main(argv=None):
+    """Точка входа."""
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(message)s",
+        stream=sys.stderr,
+    )
+
+    if args.once:
+        return check_environment()
+
+    app = LangAuto(dry_run=args.dry_run)
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        log.info("остановлено пользователем")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
