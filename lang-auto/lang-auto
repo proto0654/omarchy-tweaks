@@ -42,15 +42,44 @@ HYPRCTL_TIMEOUT = 5.0
 log = logging.getLogger("lang-auto")
 
 
-def socket_path():
-    """Вернуть путь к event-сокету Hyprland."""
-    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "").strip()
-    if not signature:
-        raise RuntimeError("переменная HYPRLAND_INSTANCE_SIGNATURE не задана")
+def hypr_dir():
+    """Каталог сокетов Hyprland."""
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     if not runtime_dir:
         runtime_dir = f"/run/user/{os.getuid()}"
-    return os.path.join(runtime_dir, "hypr", signature, ".socket2.sock")
+    return os.path.join(runtime_dir, "hypr")
+
+
+def signature_candidates():
+    """Сигнатуры инстансов Hyprland: сначала из окружения, затем самые свежие.
+
+    При перезапуске Hyprland меняет HYPRLAND_INSTANCE_SIGNATURE, а у службы
+    в окружении остаётся старая. Поэтому перебираем соседние сокеты по времени
+    изменения и цепляемся к живому.
+    """
+    candidates = []
+    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "").strip()
+    if signature:
+        candidates.append(signature)
+    found = []
+    try:
+        for name in os.listdir(hypr_dir()):
+            try:
+                mtime = os.stat(os.path.join(hypr_dir(), name, ".socket2.sock")).st_mtime
+            except OSError:
+                continue
+            found.append((mtime, name))
+    except OSError:
+        pass
+    for _, name in sorted(found, reverse=True):
+        if name not in candidates:
+            candidates.append(name)
+    return candidates
+
+
+def socket_path(signature):
+    """Путь к event-сокету конкретного инстанса."""
+    return os.path.join(hypr_dir(), signature, ".socket2.sock")
 
 
 def hyprctl(*args):
@@ -105,21 +134,28 @@ def layout_already_active(target):
     return bool(keymaps) and all(keymap_matches(k, target) for k in keymaps)
 
 
+def layout_list():
+    """Раскладки из input:kb_layout (us,ru -> ['us', 'ru'])."""
+    data = hyprctl_json("getoption", "input:kb_layout")
+    value = (data.get("str") or "").strip()
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def switch_layout(target):
-    """Переключить все клавиатуры на target, при отказе — по индексу 0."""
-    result = hyprctl("switchxkblayout", "all", target)
-    stderr = (result.stderr or "").lower()
-    if result.returncode == 0 and "invalid" not in stderr:
-        return
-    # Hyprland не принял имя раскладки — пробуем индекс 0.
-    fallback = hyprctl("switchxkblayout", "all", "0")
-    if fallback.returncode != 0:
-        details = (
-            fallback.stderr.strip()
-            or result.stderr.strip()
-            or f"код возврата {fallback.returncode}"
-        )
-        raise RuntimeError(f"hyprctl switchxkblayout: {details}")
+    """Переключить все клавиатуры на target по индексу раскладки.
+
+    Имя раскладки Hyprland не принимает («invalid arg 2» на каждую клавиатуру),
+    а индекс — принимает: это положение target в input:kb_layout.
+    """
+    layouts = layout_list()
+    try:
+        index = layouts.index(target)
+    except ValueError:
+        index = 0
+    result = hyprctl("switchxkblayout", "all", str(index))
+    if result.returncode != 0 or "invalid" in (result.stderr or "").lower():
+        details = result.stderr.strip() or f"код возврата {result.returncode}"
+        raise RuntimeError(f"hyprctl switchxkblayout all {index}: {details}")
 
 
 class LangAuto:
@@ -148,7 +184,12 @@ class LangAuto:
                 print(f"переключил бы на {target} (class={label})", flush=True)
                 return
             switch_layout(target)
-            log.info("переключил на %s (class=%s)", target, label)
+            if layout_already_active(target):
+                log.info("переключил на %s (class=%s)", target, label)
+            else:
+                log.warning(
+                    "переключение на %s не подтвердилось (class=%s)", target, label
+                )
             self._reported_errors.discard(event_class)
         except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
             self._report_error_once(
@@ -192,23 +233,24 @@ class LangAuto:
         """Основной цикл: подключение, чтение событий, переподключение."""
         announced_down = False
         while True:
-            try:
-                path = socket_path()
-            except RuntimeError as exc:
-                self._report_error_once("socket", f"нет сокета Hyprland: {exc}")
-                time.sleep(RECONNECT_DELAY)
-                continue
+            connection = None
+            path = ""
+            for signature in signature_candidates():
+                path = socket_path(signature)
+                candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    candidate.connect(path)
+                except OSError:
+                    candidate.close()
+                    continue
+                connection = candidate
+                os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = signature
+                break
 
-            connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                connection.connect(path)
-            except OSError as exc:
-                connection.close()
+            if connection is None:
                 if not announced_down:
                     log.warning(
-                        "не удалось подключиться к %s (%s); переподключаюсь",
-                        path,
-                        exc,
+                        "живой сокет Hyprland не найден в %s; переподключаюсь", hypr_dir()
                     )
                     announced_down = True
                 time.sleep(RECONNECT_DELAY)
@@ -238,12 +280,18 @@ def check_environment():
             print(f"[ОШИБКА] {message}")
             problems += 1
 
-    try:
-        path = socket_path()
-        exists = os.path.exists(path) and stat.S_ISSOCK(os.stat(path).st_mode)
-        report(exists, f"event-сокет: {path}")
-    except (RuntimeError, OSError) as exc:
-        report(False, f"event-сокет: {exc}")
+    alive = []
+    for signature in signature_candidates():
+        path = socket_path(signature)
+        try:
+            if os.path.exists(path) and stat.S_ISSOCK(os.stat(path).st_mode):
+                alive.append(path)
+        except OSError:
+            continue
+    if alive:
+        report(True, f"event-сокет: {alive[0]}")
+    else:
+        report(False, f"event-сокет Hyprland не найден в {hypr_dir()}")
 
     try:
         result = hyprctl("version")
@@ -268,10 +316,28 @@ def check_environment():
     return 0 if problems == 0 else 1
 
 
+class RussianArgumentParser(argparse.ArgumentParser):
+    """argparse с русскими служебными строками (usage/options/error)."""
+
+    def format_usage(self):
+        return super().format_usage().replace("usage:", "использование:", 1)
+
+    def format_help(self):
+        text = super().format_help()
+        return text.replace("options:", "параметры:").replace(
+            "show this help message and exit", "показать эту справку"
+        )
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: ошибка: {message}\n")
+
+
 def build_parser():
     """Аргументы командной строки."""
-    parser = argparse.ArgumentParser(
+    parser = RussianArgumentParser(
         prog="lang-auto",
+        add_help=False,
         description=(
             "Переключает клавиатуру на английскую раскладку при открытии "
             "меню Omarchy и новых терминалов."
@@ -280,6 +346,12 @@ def build_parser():
             "Раскладка берётся из первой записи input:kb_layout (обычно us). "
             "Без флагов утилита работает как демон."
         ),
+    )
+    parser.add_argument(
+        "-h",
+        "--help",
+        action="help",
+        help="показать эту справку",
     )
     parser.add_argument(
         "--once",

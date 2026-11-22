@@ -1,88 +1,101 @@
-# lang-auto — английская раскладка при открытии меню и терминалов
+# omarchy-input-kit
 
-Утилита под Omarchy 4.5 (Arch + Hyprland, Lua-конфиг).
+Инструменты под конкретную машину: Omarchy 4.5 (Arch + Hyprland, Lua-конфиг),
+мышь **Zelotes C-18** (`12c9:2003`, «SOAI USB Gaming Mouse») и клавиатура
+**DEXP First Blood** (`1a2c:635a`, «SEMICO USB Keyboard»).
 
-Проблема: после работы в русской раскладке при вызове меню Omarchy или открытии
-нового терминала ввод приходит на русском — и первая же команда или поиск
-превращаются в кашу. Нужно, чтобы в этих двух случаях ввод сразу был на
-**английском** (первая раскладка из `input:kb_layout`, обычно `us`).
+Три задачи, три каталога. Всё — python3 (stdlib) + bash, без внешних пакетов,
+кроме `hyprctl` (есть всегда) и опционально `keyd`.
 
-Никаких других задач в репозитории нет: ни устройств, ни хоткеев.
+## 1. `lang-auto/` — английская раскладка на запуске
 
-## Что должно быть
+Хочу: когда открывается меню Omarchy или новое окно терминала, ввод сразу
+переключается на **английский** (первая раскладка `kb_layout` = `us`).
 
-```
-lang-auto/            каталог утилиты
-  lang-auto           python3, stdlib, исполняемый
-  install.sh          установка/удаление
-  lang-auto.service   systemd user unit
-  README.md           как поставить, как проверить
-verify.sh             проверка на живой системе (в корне репо)
-README.md             краткое описание репозитория
-```
+Требования:
 
-## Поведение
+- Один python3-демон на stdlib, читает event-сокет Hyprland:
+  `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`.
+- Реагирует на события:
+  - `openwindow>>ADDR,WORKSPACE,CLASS,TITLE` — если CLASS в списке терминалов
+    (`foot`, `Alacritty`, `kitty`, `org.wezfurlong.wezterm`, `com.mitchellh.ghostty`,
+    `ghostty`), переключить все клавиатуры на раскладку `us`.
+  - `openlayer>>NAMESPACE` — если NAMESPACE содержит `menu` или `omarchy`
+    (меню Omarchy — layer surface), тоже переключить на `us`.
+- Переключение: `hyprctl switchxkblayout all us` — но сначала проверить
+  фактическое имя раскладки через `hyprctl -j getoption input:kb_layout`
+  (может быть `us,ru`; брать первый элемент) и `hyprctl devices -j`
+  (`keyboards[].name`), чтобы работало и по имени, и по индексу. Ошибку
+  `hyprctl` не глотать: писать в журнал один раз, не спамить каждое окно.
+- Не переключать, если фокус уже в том же терминале/меню (не дёргать зря):
+  сравнивать активную раскладку (`active_keymap`) перед вызовом.
+- Флаги: `--once` (проверить один раз и выйти), `--dry-run` (печатать, что
+  сделал бы), `--verbose`.
+- Установка: `install.sh` кладёт скрипт в `~/.local/bin/lang-auto` и
+  systemd user unit `lang-auto.service`, включает его (`systemctl --user
+  enable --now`). Удаление: `install.sh --uninstall`.
 
-Демон читает event-сокет Hyprland:
-`$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`.
+## 2. `switcher/` — конфликт хоткея свитчера с браузером
 
-Реакции:
+Симптом: в Google Chrome (он под XWayland) нажатие `Shift+Pause`
+(свитчер `text-conv`) открывает DevTools. Причина: свитчер копирует выделение
+через `wtype`-инъекцию `Ctrl+C`, пока физический Shift ещё зажат — Chrome
+получает `Ctrl+Shift+C` = «Inspect element».
 
-1. `openwindow>>ADDR,WORKSPACE,CLASS,TITLE` — если `CLASS` терминал
-   (`foot`, `Alacritty`, `kitty`, `org.wezfurlong.wezterm`, `com.mitchellh.ghostty`,
-   `ghostty`; сравнение регистронезависимое, по подстроке — Omarchy может
-   запускать `footclient`), переключить раскладку на английскую.
-2. `openlayer>>NAMESPACE` — если `NAMESPACE` содержит `menu` или `omarchy`
-   (меню Omarchy — layer surface), тоже переключить на английскую.
+Требования:
 
-Переключение:
+- `bindings.snippet.lua` — те же хоткеи, но на **release**:
+  `o.bind("SHIFT + PAUSE", "...", "/home/proto/.local/bin/text-conv layout", { release = true })`
+  и аналогично `SHIFT + BREAK`, `ALT + PAUSE`, `ALT + BREAK`.
+  Объяснить в комментарии, почему release, а не press.
+- `conflicts.md` — таблица горячих клавиш Chrome/Chromium/Electron, в которые
+  может случайно попасть инъекция свитчера (`Ctrl+Shift+C` inspect,
+  `Ctrl+Shift+I` devtools, `Ctrl+Shift+J` console, `Ctrl+Shift+M` device mode,
+  `F12` devtools) и вывод: DevTools должен открываться **только по F12**,
+  остальные комбинации свитчер не должен задевать.
+- `verify.sh` — проверка на живой системе: `hyprctl binds -j` показывает
+  хоткей с `release`-флагом; `hyprctl configerrors` пусто.
 
-- Целевую раскладку брать из `hyprctl -j getoption input:kb_layout`: первые
-  символы до запятой (`us,ru` → `us`). Если значение пустое — `us`.
-- Вызывать `hyprctl switchxkblayout all <имя>`. Если Hyprland не принял имя
-  (rc != 0 или в stderr «Invalid»), повторить по индексу `0`.
-- Перед вызовом проверить активную раскладку: `hyprctl devices -j`, поле
-  `keyboards[].active_keymap`; если уже начинается на целевую (регистронезависимо) —
-  ничего не делать (не дёргать переключение зря).
-- Ошибки `hyprctl` писать в stderr один раз на класс события, не спамить.
+## 3. `devices/` — что реально умеют Zelotes C-18 и DEXP First Blood
 
-## Флаги
+Факты с этой машины (HID report descriptors, сняты из sysfs):
 
-```
-lang-auto              демон (режим по умолчанию)
-lang-auto --once       проверить окружение и выйти (сокет, hyprctl, раскладки)
-lang-auto --dry-run    печатать «переключил бы на us (class=foot)», ничего не менять
-lang-auto --verbose    журнал каждого события
-lang-auto --help
-```
+- Мышь `12c9:2003`, три интерфейса:
+  - `hidraw0` — мышь, 5 кнопок + consumer `0x0238`;
+  - `hidraw1` — **эмуляция клавиатуры**: полный набор keyboard usages
+    (`0x00..0xC8`) + consumer-массив — джойстик и боковые кнопки шлют
+    обычные клавиши (по умолчанию W/S/A/D/Space), значит маппятся любым
+    evdev-инструментом;
+  - `hidraw2` — vendor page `0xFF00` (настройка DPI/подсветки, протокол
+    не документирован).
+- Клавиатура `1a2c:635a`, два интерфейса:
+  - `hidraw5` — boot-клавиатура (6KRO);
+  - `hidraw6` — consumer + vendor `0xFF00/0x01` (подсветка RGB, 8 байт) +
+    обычная клавиатура. `FN+F12` = калькулятор, `FN+F1..F12` = медиа.
 
-## install.sh
+Требования:
 
-- `install -m 755 lang-auto ~/.local/bin/lang-auto`
-- ставит `~/.config/systemd/user/lang-auto.service`
-  (`ExecStart=%h/.local/bin/lang-auto`, `Restart=on-failure`, `PartOf=graphical-session.target`,
-  `After=graphical-session.target`)
-- `systemctl --user daemon-reload && systemctl --user enable --now lang-auto.service`
-- `--uninstall`: `systemctl --user disable --now`, удалить unit и бинарь.
-- `set -euo pipefail`, `--help`, идемпотентность (повторный запуск не ломается).
+- `udev/99-input-kit.rules` — `uaccess` для hidraw обоих устройств, чтобы
+  инструменты работали без root; `SUBSYSTEM=="hidraw"` по `ATTRS{idVendor}`,
+  `ATTRS{idProduct}`.
+- `keyd/zelotes-c18.conf` — шаблон пер-девайсного ремапа для keyd: секция
+  `[zelotes-c18]` (`[ids]` → `12c9:2003`), примеры: джойстик вверх/вниз/влево/
+  вправо → `up/down/left/right`, боковая кнопка → `macro`/`layer`. Комментарии
+  по-русски, значения — реальные keyd-имена.
+- `docs/dexp-first-blood.md` — подсветка (FN+SCROLL цикл, FN+стрелки
+  яркость/скорость, FN+WIN блокировка Win), медиа-слой, что из этого работает
+  без вендорского софта, что требует Windows-утилиты (нет Linux-аналога).
+- `docs/zelotes-c18.md` — 11 кнопок, DPI 1500/2500/4000/7000/10000,
+  джойстик = 5 клавиш, как проверить/переназначить, статус libratbag.
 
-## verify.sh (в корне)
+## Общие требования
 
-Печатает по строке на проверку и итог:
-
-1. `hyprctl -j getoption input:kb_layout` — раскладки читаются, первая непустая.
-2. `hyprctl devices -j` — есть хотя бы одна клавиатура, печатает её `active_keymap`.
-3. Демон в статусе `active` (`systemctl --user is-active lang-auto.service`).
-4. Сокет существует по пути из `HYPRLAND_INSTANCE_SIGNATURE`.
-5. `--dry-run` проходит без ошибок.
-
-Итог: `ИТОГ: OK` или `ИТОГ: FAIL (N)`, код возврата 0/1.
-
-## Требования к коду
-
-- Python 3 stdlib only (`socket`, `json`, `subprocess`, `argparse`, `logging`).
-- Переподключение к сокету, если Hyprland перезапустился (не падать, ждать и
-  пробовать снова; в журнал одну строку).
-- Русские комментарии и русские сообщения CLI. Английский — только имена
-  классов окон, коды и имена переменных.
-- Коммит: `feat: switch to english layout on omarchy menu and new terminals`.
+- README.md: что за устройства, что ставится, как проверить каждую часть
+  одной командой, скриншот-инструкция в тексте.
+- Русские комментарии и русские сообщения CLI (английского в интерфейсе нет,
+  кроме имён устройств и кодов клавиш).
+- Ничего не трогать в `/usr/share/omarchy/`; только `~/.config`, `~/.local`.
+- Каждый скрипт: `set -euo pipefail`, `--help`, `shellcheck`-чистый.
+- Проверка: `bash verify.sh` в корне запускает все три проверки и печатает
+  итог `OK/FAIL` по каждой части.
+- Коммиты Conventional Commits, по-английски, коротко.
