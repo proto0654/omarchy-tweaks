@@ -144,10 +144,35 @@ else
   fail "Zelotes C-18: найдено ${mouse_interfaces} hidraw-интерфейсов, ожидалось 3"
 fi
 
-if [[ ${keyboard_interfaces} -eq 2 ]]; then
-  ok "DEXP First Blood: 2 hidraw-интерфейса"
+# Клавиатура заявляет два HID-интерфейса: boot-клавиатуру и consumer/vendor
+# (у этой прошивки там же RGB). Второй поднимается не всегда: на low-speed порту
+# usbhid срывается на чтении дескриптора с таймаутом (-110, ETIMEDOUT), драйвер
+# к интерфейсу не привязывается и hidraw у него не появляется. Клавиатура при
+# этом полностью работает через первый интерфейс, а вендорный канал мы не
+# используем — поэтому второй интерфейс это предупреждение, а не FAIL.
+keyboard_inputs=$(grep -ls 'SEMICO' /sys/class/input/event*/device/name 2>/dev/null | wc -l)
+
+if [[ ${keyboard_interfaces} -ge 2 ]]; then
+  ok "DEXP First Blood: 2 hidraw-интерфейса (boot + consumer/vendor)"
+elif [[ ${keyboard_interfaces} -eq 1 && ${keyboard_inputs} -ge 1 ]]; then
+  ok "DEXP First Blood: клавиатура на месте (1 hidraw, event-устройство отвечает)"
+  warn "DEXP First Blood: второй hidraw-интерфейс (consumer/vendor, RGB) не поднялся — на работу клавиатуры не влияет"
+  reason=""
+  if command -v journalctl >/dev/null 2>&1; then
+    reason=$(journalctl -k --no-pager 2>/dev/null \
+      | grep -E "usbhid 1-[0-9.]+:1\.[0-9]+: (can't add hid device|probe with driver usbhid failed)" \
+      | tail -1 | sed 's/.*kernel: //')
+  fi
+  if [[ -n ${reason} ]]; then
+    warn "  ядро: ${reason}"
+  else
+    warn "  причина в журнале ядра не найдена; проверьте: journalctl -k | grep usbhid"
+  fi
+  warn "  при необходимости: переподключить клавиатуру в другой порт (USB2) и посмотреть ls /sys/class/hidraw/"
+elif [[ ${keyboard_interfaces} -eq 0 ]]; then
+  fail "DEXP First Blood: hidraw-интерфейсов не найдено (клавиатура не подключена?)"
 else
-  fail "DEXP First Blood: найдено ${keyboard_interfaces} hidraw-интерфейсов, ожидалось 2"
+  fail "DEXP First Blood: найден ${keyboard_interfaces} hidraw, но event-устройства клавиатуры нет"
 fi
 
 # --- живая проверка ACL -------------------------------------------------
