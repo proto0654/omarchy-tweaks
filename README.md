@@ -8,7 +8,7 @@
 каталог со своим `install.sh`/`verify.sh`, общие скрипты в корне прогоняют их
 все. Части независимы: можно поставить одну.
 
-Четыре части:
+Пять частей:
 
 | Каталог | Задача | Что ставится |
 |---|---|---|
@@ -16,6 +16,7 @@
 | `switcher/` | убрать конфликт `Shift+Pause` с DevTools в Chrome | сниппет для `~/.config/hypr/bindings.lua` |
 | `devices/` | udev, keyd и документация по обеим устройствам | правило udev, шаблон keyd, docs |
 | `apps-by-usage/` | сетка «Приложения» в стартовом меню: сортировка по частоте запусков | клон плагина `omarchy.dock` + два патча |
+| `telegram-webview/` | мини-апки Telegram: убрать краш вебвью на Wayland+NVIDIA | systemd drop-in юнита Telegram + `environment.d` |
 
 Всё написано на python3 (stdlib) и bash. Внешние зависимости: `hyprctl`
 (есть в Hyprland) и опционально `keyd`. В `/usr/share/omarchy/` ничего не
@@ -31,6 +32,7 @@ cd ~/projects/omarchy-tweaks
 ./install.sh --with-udev      # правило udev для hidraw (sudo)
 ./install.sh --with-keyd      # конфиг keyd для мыши (sudo, если keyd есть)
 ./install.sh --with-apps      # сортировка «Приложений» по частоте (клон дока)
+./install.sh --with-telegram  # починить мини-апки Telegram (Wayland + NVIDIA)
 ```
 
 `install.sh` понимает `--dry-run`, `--uninstall` и `--help`. Системные файлы
@@ -66,6 +68,7 @@ bash lang-auto/verify.sh
 bash switcher/verify.sh
 bash devices/verify.sh
 bash apps-by-usage/verify.sh -v
+bash telegram-webview/verify.sh
 ```
 
 Что именно проверяется:
@@ -83,6 +86,9 @@ bash apps-by-usage/verify.sh -v
 - `apps-by-usage`: клон плагина на месте, оба патча наложены, в манифесте есть
   kind `menu`, клон включён, стоковый `omarchy.dock` выключен. С `-v` печатает
   верх журнала запусков.
+- `telegram-webview`: оба конфига на месте, у живого Telegram в окружении есть
+  `__EGL_VENDOR_LIBRARY_FILENAMES` (Mesa) и нет `WEBKIT_DISABLE_DMABUF_RENDERER`,
+  за сутки нет core dump Telegram.
 
 ## 1. lang-auto
 
@@ -240,6 +246,53 @@ omarchy plugin remove ${USER}.dock
 посмотрите `bash apps-by-usage/install.sh` (он переклонирует при отсутствии
 клона) и при необходимости обновите патчи из `apps-by-usage/*.patch`.
 
+## 5. telegram-webview
+
+Задача: мини-апки Telegram не открывались — окно умирало, а следом падала вся
+телега.
+
+Причина в трёх слоях, и лечится она не в Telegram:
+
+- мини-апки на Linux tdesktop рисует через WebKitGTK (`webkit2gtk-4.1`), а не
+  через Qt WebEngine;
+- на Wayland с проприетарным NVIDIA у WebKit падает DMA-BUF рендерер: GTK
+  получает `Error 71 (Protocol error) dispatching to Wayland display`,
+  Hyprland пишет `error in client communication`, а tdesktop следом падает в
+  `QPainter::drawPixmap` (SIGSEGV в `libQt6Gui`);
+- очевидный костыль `WEBKIT_DISABLE_DMABUF_RENDERER=1` краш убирает, но на
+  WebKitGTK 2.54 ломает прозрачные окна: рисуются только области, которые
+  перерисовались (наведение мышью), остальное остаётся прозрачным. Окно
+  мини-апки у tdesktop как раз прозрачное и без рамки.
+
+Что делает эта часть: DMA-BUF **не** отключает (это и есть источник артефактов),
+а уводит EGL вебвью на Mesa (Intel iGPU), где DMA-BUF работает. Ставятся два
+файла:
+
+| Файл | Что задаёт |
+|---|---|
+| `~/.config/systemd/user/dbus-:1.1-org.telegram.desktop@.service.d/telegram-webview.conf` | только юниту Telegram: `GDK_SCALE=1`, `__EGL_VENDOR_LIBRARY_FILENAMES=…/50_mesa.json`, снятие `WEBKIT_DISABLE_DMABUF_RENDERER` и `WEBKIT_DISABLE_COMPOSITING_MODE` |
+| `~/.config/environment.d/90-webkit-dmabuf.conf` | всем прочим WebKitGTK-приложениям: `WEBKIT_DISABLE_DMABUF_RENDERER=1` (без неё они падают с тем же `Error 71`) |
+
+```bash
+bash telegram-webview/install.sh      # оба файла + перезапуск Telegram
+bash telegram-webview/verify.sh       # файлы, окружение живого клиента, свежие краши
+```
+
+Проверять руками: открыть любую мини-апку (Zarub/Wallet) и поводить мышкой —
+блоки не должны исчезать, фон не должен просвечивать.
+
+Ограничения:
+
+- Отдельное окно мини-апки — не баг, а поведение tdesktop 7.x на Linux: мини-апки
+  идут через процесс `Telegram -webviewhelper` со своим GTK-окном, встроенного
+  режима «внутри чата» на Linux нет.
+- На WebKitGTK 2.54.x это обход, а не починка: при обновлении `webkit2gtk-4.1`
+  перепроверьте `bash telegram-webview/verify.sh` и саму мини-апку. Если снова
+  начнёт ломаться — откат на 2.52.6 из архива Arch:
+  `https://archive.archlinux.org/packages/w/webkit2gtk-4.1/`.
+- `GDK_SCALE=1` в drop-in ставится потому, что у GTK в сессии `GDK_SCALE=2`, и
+  иначе окно мини-апки открывается вдвое крупнее.
+
 ## Скриншот-проверка (что должно быть видно)
 
 Это текстовые «скриншоты»: команда и ожидаемая картинка. Реальные снимки
@@ -316,6 +369,7 @@ getfacl -p /dev/hidraw0
 ```bash
 ./install.sh --uninstall
 ./install.sh --uninstall --with-apps              # плюс вернуть штатный док
+./install.sh --uninstall --with-telegram          # плюс убрать фикс мини-апок
 ./install.sh --uninstall --with-udev --with-keyd  # плюс системные файлы
 ```
 

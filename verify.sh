@@ -13,7 +13,8 @@ usage() {
   lang-auto/verify.sh  — синтаксис, справка и живой запуск демона;
   switcher/verify.sh   — release-привязки в живом Hyprland;
   devices/verify.sh    — udev, keyd и наличие интерфейсов устройств;
-  apps-by-usage/verify.sh — клон дока, патчи и включённый плагин.
+  apps-by-usage/verify.sh — клон дока, патчи и включённый плагин;
+  telegram-webview/verify.sh — конфиги мини-апок Telegram и окружение живого клиента.
 
 Параметры:
   --live      для devices дополнительно требовать uaccess-ACL;
@@ -58,6 +59,7 @@ run_part() {
 run_part lang-auto
 run_part switcher
 run_part apps-by-usage
+run_part telegram-webview
 
 if [[ ${live} == true ]]; then
   run_part devices --live

@@ -22,6 +22,8 @@ usage() {
   --with-keyd      установить /etc/keyd/zelotes-c18.conf (sudo)
   --with-apps      поставить apps-by-usage: клон плагина дока, в котором
                    сетка «Приложения» отсортирована по частоте запусков
+  --with-telegram  починить мини-апки Telegram на Wayland+NVIDIA: drop-in для
+                   юнита Telegram + environment.d для прочих WebKitGTK-приложений
   --uninstall      удалить lang-auto и сниппет; системные файлы удаляются
                    только вместе с --with-udev/--with-keyd
   --dry-run        показать команды, ничего не менять
@@ -36,6 +38,7 @@ with_switcher=false
 with_udev=false
 with_keyd=false
 with_apps=false
+with_telegram=false
 uninstall=false
 
 while (($#)); do
@@ -58,6 +61,9 @@ while (($#)); do
       ;;
     --with-apps)
       with_apps=true
+      ;;
+    --with-telegram)
+      with_telegram=true
       ;;
     --uninstall)
       uninstall=true
@@ -120,6 +126,14 @@ if [[ ${uninstall} == true ]]; then
     run omarchy plugin remove "${USER:-$(id -un)}.dock" --yes
   fi
 
+  if [[ ${with_telegram} == true ]]; then
+    telegram_args=(--uninstall)
+    if [[ ${dry_run} == true ]]; then
+      telegram_args+=(--dry-run)
+    fi
+    run bash "${ROOT_DIR}/telegram-webview/install.sh" "${telegram_args[@]}"
+  fi
+
   printf 'Готово\n'
   exit 0
 fi
@@ -164,6 +178,15 @@ if [[ ${with_apps} == true ]]; then
     apps_args+=(--dry-run)
   fi
   run bash "${ROOT_DIR}/apps-by-usage/install.sh" "${apps_args[@]}"
+fi
+
+if [[ ${with_telegram} == true ]]; then
+  printf 'Устанавливаю telegram-webview\n'
+  telegram_args=()
+  if [[ ${dry_run} == true ]]; then
+    telegram_args+=(--dry-run)
+  fi
+  run bash "${ROOT_DIR}/telegram-webview/install.sh" "${telegram_args[@]}"
 fi
 
 printf '\nГотово. Проверка всего: bash %s/verify.sh\n' "${ROOT_DIR}"
