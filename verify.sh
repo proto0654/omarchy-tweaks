@@ -12,7 +12,8 @@ usage() {
 Запускает проверки:
   lang-auto/verify.sh  — синтаксис, справка и живой запуск демона;
   switcher/verify.sh   — release-привязки в живом Hyprland;
-  devices/verify.sh    — udev, keyd и наличие интерфейсов устройств.
+  devices/verify.sh    — udev, keyd и наличие интерфейсов устройств;
+  apps-by-usage/verify.sh — клон дока, патчи и включённый плагин.
 
 Параметры:
   --live      для devices дополнительно требовать uaccess-ACL;
@@ -56,6 +57,7 @@ run_part() {
 
 run_part lang-auto
 run_part switcher
+run_part apps-by-usage
 
 if [[ ${live} == true ]]; then
   run_part devices --live
@@ -65,7 +67,7 @@ fi
 
 printf '\n'
 if [[ ${overall} -eq 0 ]]; then
-  printf 'Итог: OK — все три части прошли проверку\n'
+  printf 'Итог: OK — все части прошли проверку\n'
 else
   printf 'Итог: FAIL — есть непрошедшие проверки (см. вывод выше)\n' >&2
 fi

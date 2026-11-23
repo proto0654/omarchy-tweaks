@@ -19,6 +19,8 @@ usage() {
                    заменить press-строки (файл сам не подключается)
   --with-udev      установить /etc/udev/rules.d/99-input-kit.rules (sudo)
   --with-keyd      установить /etc/keyd/zelotes-c18.conf (sudo)
+  --with-apps      поставить apps-by-usage: клон плагина дока, в котором
+                   сетка «Приложения» отсортирована по частоте запусков
   --uninstall      удалить lang-auto и сниппет; системные файлы удаляются
                    только вместе с --with-udev/--with-keyd
   --dry-run        показать команды, ничего не менять
@@ -32,6 +34,7 @@ dry_run=false
 with_switcher=false
 with_udev=false
 with_keyd=false
+with_apps=false
 uninstall=false
 
 while (($#)); do
@@ -51,6 +54,9 @@ while (($#)); do
       ;;
     --with-keyd)
       with_keyd=true
+      ;;
+    --with-apps)
+      with_apps=true
       ;;
     --uninstall)
       uninstall=true
@@ -109,6 +115,10 @@ if [[ ${uninstall} == true ]]; then
     fi
   fi
 
+  if [[ ${with_apps} == true ]]; then
+    run omarchy plugin remove "${USER:-$(id -un)}.dock" --yes
+  fi
+
   printf 'Готово\n'
   exit 0
 fi
@@ -144,6 +154,15 @@ if [[ ${with_keyd} == true ]]; then
   else
     printf 'предупреждение: keyd не установлен; конфигурация скопирована, но не применена\n' >&2
   fi
+fi
+
+if [[ ${with_apps} == true ]]; then
+  printf 'Устанавливаю apps-by-usage\n'
+  apps_args=()
+  if [[ ${dry_run} == true ]]; then
+    apps_args+=(--dry-run)
+  fi
+  run bash "${ROOT_DIR}/apps-by-usage/install.sh" "${apps_args[@]}"
 fi
 
 printf '\nГотово. Проверка всего: bash %s/verify.sh\n' "${ROOT_DIR}"

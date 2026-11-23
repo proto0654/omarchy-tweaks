@@ -1,0 +1,58 @@
+--- a/Dock.qml
++++ b/Dock.qml
+@@ -14,9 +14,53 @@
+   property var shell: null
+   property var manifest: null
+ 
++  // A clone runs against a scoped shell API: the app library there is a proxy
++  // granted to plugins that declare the "menu" kind, and the shell config is
++  // not exposed at all, so the clone reads shell.json itself below.
+   readonly property var appLibrary: shell ? shell.appLibrary : null
+-  readonly property var dockConfig: shell && shell.shellConfig && shell.shellConfig.dock ? shell.shellConfig.dock : ({})
+-  readonly property var defaultDockConfig: shell && shell.defaultsConfig && shell.defaultsConfig.dock ? shell.defaultsConfig.dock : ({})
++
++  // The dock's own config: the stock dock section from the shipped defaults,
++  // overridden by the user's ~/.config/omarchy/shell.json. Both files are
++  // watched, so `omarchy dock` and hand edits take effect live.
++  property var stockConfig: ({})
++  property var userConfig: ({})
++  readonly property var shellConfig: {
++    var dock = ({})
++    var stockDock = root.stockConfig && root.stockConfig.dock ? root.stockConfig.dock : ({})
++    for (var key in stockDock) dock[key] = stockDock[key]
++    var userDock = root.userConfig && root.userConfig.dock ? root.userConfig.dock : ({})
++    for (var userKey in userDock) dock[userKey] = userDock[userKey]
++    return ({ dock: dock })
++  }
++  readonly property var defaultsConfig: root.stockConfig
++  readonly property string shellConfigPath: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/shell.json"
++
++  function parseConfig(rawText) {
++    var value = String(rawText || "").trim()
++    if (value.length === 0) return ({})
++    try { return JSON.parse(value) } catch (e) { return ({}) }
++  }
++
++  FileView {
++    id: stockConfigFile
++    path: Quickshell.env("OMARCHY_PATH") + "/config/omarchy/shell.json"
++    watchChanges: true
++    printErrors: false
++    onLoaded: root.stockConfig = root.parseConfig(text())
++    onFileChanged: reload()
++  }
++
++  FileView {
++    id: userConfigFile
++    path: root.shellConfigPath
++    watchChanges: true
++    printErrors: false
++    onLoaded: root.userConfig = root.parseConfig(text())
++    onLoadFailed: root.userConfig = ({})
++    onFileChanged: reload()
++  }
++  readonly property var dockConfig: root.shellConfig.dock
++  readonly property var defaultDockConfig: root.defaultsConfig.dock ? root.defaultsConfig.dock : ({})
+   readonly property string position: DockModel.normalizePosition(dockConfig.position)
+   readonly property bool vertical: DockModel.isVertical(position)
+   readonly property bool autohide: dockConfig.autohide === true

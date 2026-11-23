@@ -4,13 +4,14 @@
 мышь **Zelotes C-18** (`12c9:2003`, «SOAI USB Gaming Mouse») и клавиатура
 **DEXP First Blood** (`1a2c:635a`, «SEMICO USB Keyboard»).
 
-Три независимые части:
+Четыре независимые части:
 
 | Каталог | Задача | Что ставится |
 |---|---|---|
 | `lang-auto/` | английская раскладка при открытии терминала или меню Omarchy | `~/.local/bin/lang-auto`, user unit |
 | `switcher/` | убрать конфликт `Shift+Pause` с DevTools в Chrome | сниппет для `~/.config/hypr/bindings.lua` |
 | `devices/` | udev, keyd и документация по обеим устройствам | правило udev, шаблон keyd, docs |
+| `apps-by-usage/` | сетка «Приложения» в стартовом меню: сортировка по частоте запусков | клон плагина `omarchy.dock` + два патча |
 
 Всё написано на python3 (stdlib) и bash. Внешние зависимости: `hyprctl`
 (есть в Hyprland) и опционально `keyd`. В `/usr/share/omarchy/` ничего не
@@ -25,6 +26,7 @@ cd ~/projects/omarchy-input-kit
 ./install.sh --with-switcher  # скопировать сниппет switcher (см. ниже)
 ./install.sh --with-udev      # правило udev для hidraw (sudo)
 ./install.sh --with-keyd      # конфиг keyd для мыши (sudo, если keyd есть)
+./install.sh --with-apps      # сортировка «Приложений» по частоте (клон дока)
 ```
 
 `install.sh` понимает `--dry-run`, `--uninstall` и `--help`. Системные файлы
@@ -59,6 +61,7 @@ bash verify.sh --live   # плюс строгая проверка uaccess-ACL �
 bash lang-auto/verify.sh
 bash switcher/verify.sh
 bash devices/verify.sh
+bash apps-by-usage/verify.sh -v
 ```
 
 Что именно проверяется:
@@ -71,6 +74,9 @@ bash devices/verify.sh
 - `devices`: `udevadm verify`, наличие `uaccess` для обоих id, шаблон keyd
   (`keyd check`, если keyd установлен), 3 интерфейса мыши и 2 клавиатуры.
   С `--live` ещё требуется ACL на `/dev/hidraw*`.
+- `apps-by-usage`: клон плагина на месте, оба патча наложены, в манифесте есть
+  kind `menu`, клон включён, стоковый `omarchy.dock` выключен. С `-v` печатает
+  верх журнала запусков.
 
 ## 1. lang-auto
 
@@ -174,6 +180,43 @@ evtest /dev/input/by-id/usb-SOAI_USB_Gaming_Mouse-if01-event-kbd
 evtest /dev/input/by-id/usb-SEMICO_USB_Keyboard-if01-event-kbd
 ```
 
+## 4. apps-by-usage
+
+Задача: в стартовом меню (`SUPER+SPACE` → «Приложения») сетка всегда шла по
+алфавиту, и нужные приложения приходилось каждый раз искать.
+
+Что сделано:
+
+- стоковый плагин дока клонируется в `~/.config/omarchy/plugins/${USER}.dock`;
+- `AppGrid.qml`: при пустом поле поиска плитки идут по числу запусков **из этой
+  же сетки** — не по глобальной статистике окон и не по запускам из дока.
+  Первая плитка — самая частая, а фокус при открытии и так стоит на первой.
+  Как только начинаешь печатать, порядок снова по релевантности запроса;
+- `Dock.qml`: клон живёт в scoped-shell без `appLibrary` и без `shellConfig`,
+  поэтому в манифесте добавлен kind `menu` (только с ним шелл выдаёт клону
+  app library через прокси), а секцию `dock` из `~/.config/omarchy/shell.json`
+  клон читает сам — `omarchy dock` и правки файла подхватываются на лету;
+- журнал запусков: `~/.local/state/omarchy/app-launch-usage`, одна строка =
+  одно нажатие. Удалить файл — счётчики обнулятся.
+
+```bash
+bash apps-by-usage/install.sh     # клон + патчи + kind menu + рестарт шелла
+bash apps-by-usage/verify.sh -v   # проверка и текущий верх журнала
+bash apps-by-usage/seed.sh        # стартовые счётчики, если журнал пуст
+```
+
+В `/usr/share/omarchy/` ничего не пишется: правка пакета была бы затёрта
+обновлением. Откат к штатной сетке:
+
+```bash
+omarchy plugin remove ${USER}.dock
+```
+
+Ограничение: клон — это снимок дока на момент установки. Правки дока из
+обновлений Omarchy в клон сами не попадают: после крупного обновления
+посмотрите `bash apps-by-usage/install.sh` (он переклонирует при отсутствии
+клона) и при необходимости обновите патчи из `apps-by-usage/*.patch`.
+
 ## Скриншот-проверка (что должно быть видно)
 
 Это текстовые «скриншоты»: команда и ожидаемая картинка. Реальные снимки
@@ -209,7 +252,11 @@ hyprctl -j binds | python3 -m json.tool | grep -A2 '"key": "PAUSE"'
 `Shift+Pause`: текст меняет раскладку, DevTools не открывается. `F12`
 по-прежнему открывает DevTools — это ожидаемо.
 
-**Снимок 4 — устройства и права.** Выполните:
+**Снимок 4 — сетка «Приложений».** `SUPER+SPACE` → «Приложения». Верхние
+плитки — те, что чаще всего запускались из этой сетки, курсор стоит на первой.
+`bash apps-by-usage/verify.sh -v` показывает те же счётчики в терминале.
+
+**Снимок 5 — устройства и права.** Выполните:
 
 ```bash
 bash devices/verify.sh --live
@@ -232,11 +279,17 @@ getfacl -p /dev/hidraw0
   из Linux: вендорные протоколы не документированы, libratbag эту мышь не
   поддерживает.
 - `keyd` в этом репозитории только шаблон; служба keyd не включается.
+- `apps-by-usage` считает только запуски из сетки «Приложения». Запуск с дока,
+  из меню поиском или из терминала счётчик не увеличивает — так и задумано:
+  сортировка отражает привычки именно в этом меню.
+- Клон дока — снимок на момент установки: обновления Omarchy в него не
+  приезжают, пока патчи не обновлены вручную.
 
 ## Удаление
 
 ```bash
 ./install.sh --uninstall
+./install.sh --uninstall --with-apps              # плюс вернуть штатный док
 ./install.sh --uninstall --with-udev --with-keyd  # плюс системные файлы
 ```
 

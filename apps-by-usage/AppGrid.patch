@@ -1,0 +1,130 @@
+--- a/AppGrid.qml
++++ b/AppGrid.qml
+@@ -1,5 +1,6 @@
+ import QtQuick
+ import Quickshell
++import Quickshell.Io
+ import Quickshell.Wayland
+ import qs.Commons
+ import qs.Commons as Commons
+@@ -29,6 +30,94 @@
+   property int selectedIndex: 0
+   property var apps: []
+ 
++  // --- Launch frequency (user customization) -------------------------------
++  // Every app launched from the grid appends its desktop id to a state file.
++  // The everyday view (empty search box) is ordered by those counts, so cell 0
++  // -- the cell the grid opens focused -- is the app picked most often.
++  readonly property string appUsagePath: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarchy/app-launch-usage"
++  property var appUsageCounts: ({})
++  property string appUsageSignature: ""
++
++  function appUsageId(value) {
++    var id = String(value || "").trim()
++    if (id.slice(-8) === ".desktop") id = id.slice(0, -8)
++    return id
++  }
++
++  function appUsageSignatureOf(counts) {
++    var keys = []
++    for (var key in counts) keys.push(key)
++    keys.sort()
++    var parts = []
++    for (var i = 0; i < keys.length; i++) parts.push(keys[i] + ":" + counts[keys[i]])
++    return parts.join("|")
++  }
++
++  function loadAppUsage(rawText) {
++    var counts = ({})
++    var lines = String(rawText || "").split("\n")
++    for (var i = 0; i < lines.length; i++) {
++      var id = root.appUsageId(lines[i])
++      if (!id) continue
++      counts[id] = (counts[id] || 0) + 1
++    }
++    var signature = root.appUsageSignatureOf(counts)
++    // Same counts, same order: rebuilding would only move the cursor.
++    if (signature === root.appUsageSignature) return
++    root.appUsageSignature = signature
++    root.appUsageCounts = counts
++    if (root.opened && !root.filterText.trim()) root.rebuild()
++    else root.appsStale = true
++  }
++
++  function refreshAppUsage() {
++    if (appUsageReader.running) return
++    appUsageReader.running = true
++  }
++
++  function recordAppLaunch(value) {
++    var id = root.appUsageId(value)
++    if (!id) return
++    var counts = root.appUsageCounts
++    counts[id] = (counts[id] || 0) + 1
++    root.appUsageCounts = counts
++    root.appUsageSignature = root.appUsageSignatureOf(counts)
++    Util.execArgv(["bash", "-c", "mkdir -p \"$(dirname \"$0\")\"; printf '%s\\n' \"$1\" >> \"$0\"", root.appUsagePath, id])
++  }
++
++  // Frequency first, alphabetical for anything never launched from here, so
++  // the grid stays predictable below the apps the user actually reaches for.
++  function orderByUsage(rows) {
++    var counts = root.appUsageCounts
++    return rows.slice().sort(function(a, b) {
++      var aCount = counts[root.appUsageId(a.entry && a.entry.id)] || 0
++      var bCount = counts[root.appUsageId(b.entry && b.entry.id)] || 0
++      if (aCount !== bCount) return bCount - aCount
++      var aKey = String(a.key || "").toLowerCase()
++      var bKey = String(b.key || "").toLowerCase()
++      if (aKey < bKey) return -1
++      if (aKey > bKey) return 1
++      var aName = String(a.name || "").toLowerCase()
++      var bName = String(b.name || "").toLowerCase()
++      if (aName < bName) return -1
++      if (aName > bName) return 1
++      return 0
++    })
++  }
++
++  Process {
++    id: appUsageReader
++    property string collected: ""
++    command: ["bash", "-c", "cat \"$0\" 2>/dev/null || true", root.appUsagePath]
++    stdout: SplitParser {
++      onRead: function(line) { appUsageReader.collected += line + "\n" }
++    }
++    onStarted: appUsageReader.collected = ""
++    onExited: root.loadAppUsage(appUsageReader.collected)
++  }
++
++  Component.onCompleted: root.refreshAppUsage()
++
+   readonly property int iconSize: Math.round(56 * Style.fontScale)
+   readonly property int labelHeight: Math.ceil(labelMetrics.height) * 2
+   readonly property int cellGutter: Style.spacing.sm
+@@ -53,6 +142,7 @@
+ 
+   function open() {
+     root.selectedIndex = 0
++    root.refreshAppUsage()
+     if (root.appLibrary) root.appLibrary.refreshIcons()
+     // The cells from last time are reused when nothing changed, so the grid
+     // opens with its icons already drawn.
+@@ -123,6 +213,9 @@
+   function rebuild() {
+     root.appsStale = false
+     var rows = root.appLibrary ? root.appLibrary.sortedEntries(root.filterText) : []
++    // Typing searches for a name, so relevance wins there; an empty box is the
++    // everyday view and follows launch frequency.
++    if (!root.filterText.trim()) rows = root.orderByUsage(rows)
+     root.apps = rows.map(function(row) { return row.entry })
+     root.selectedIndex = Math.max(0, Math.min(root.selectedIndex, root.apps.length - 1))
+     grid.positionViewAtBeginning()
+@@ -143,6 +236,7 @@
+   function launch(index) {
+     var entry = root.apps[index]
+     if (!entry || !root.appLibrary) return
++    root.recordAppLaunch(entry.id)
+     root.close()
+     if (root.dock) root.dock.launchEntry(entry)
+     else root.appLibrary.launch(entry.id, root.appLibrary.entryName(entry))
