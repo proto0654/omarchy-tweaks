@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Установка omarchy-input-kit: lang-auto, сниппет switcher и файлы devices.
+# Установка omarchy-tweaks: lang-auto, сниппет switcher, файлы devices и
+# apps-by-usage (с --with-apps).
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -92,7 +93,7 @@ run_root() {
 }
 
 if [[ ${uninstall} == true ]]; then
-  printf 'Удаляю omarchy-input-kit\n'
+  printf 'Удаляю omarchy-tweaks\n'
 
   lang_args=(--uninstall)
   if [[ ${dry_run} == true ]]; then

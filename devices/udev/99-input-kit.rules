@@ -1,4 +1,5 @@
-# Правило udev для omarchy-input-kit.
+# Правило udev для omarchy-tweaks (имя файла историческое: 99-input-kit.rules,
+# чтобы не переустанавливать правило в /etc/udev/rules.d при переименовании).
 #
 # Даёт текущему пользователю доступ к hidraw-интерфейсам мыши Zelotes C-18
 # (12c9:2003) и клавиатуры DEXP First Blood (1a2c:635a) через ACL uaccess.

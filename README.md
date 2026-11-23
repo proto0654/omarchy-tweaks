@@ -1,10 +1,14 @@
-# omarchy-input-kit
+# omarchy-tweaks
 
-Инструменты под конкретную машину: Omarchy 4.5 (Arch + Hyprland, Lua-конфиг),
-мышь **Zelotes C-18** (`12c9:2003`, «SOAI USB Gaming Mouse») и клавиатура
+Твики под конкретную машину: Omarchy 4.5 (Arch + Hyprland, Lua-конфиг), мышь
+**Zelotes C-18** (`12c9:2003`, «SOAI USB Gaming Mouse») и клавиатура
 **DEXP First Blood** (`1a2c:635a`, «SEMICO USB Keyboard»).
 
-Четыре независимые части:
+Один репозиторий на все локальные правки рабочего стола: каждая часть — свой
+каталог со своим `install.sh`/`verify.sh`, общие скрипты в корне прогоняют их
+все. Части независимы: можно поставить одну.
+
+Четыре части:
 
 | Каталог | Задача | Что ставится |
 |---|---|---|
@@ -20,7 +24,7 @@
 ## Быстрая установка
 
 ```bash
-cd ~/projects/omarchy-input-kit
+cd ~/projects/omarchy-tweaks
 
 ./install.sh                  # lang-auto + user unit, включает службу
 ./install.sh --with-switcher  # скопировать сниппет switcher (см. ниже)
@@ -147,7 +151,8 @@ bash lang-auto/install.sh --uninstall
 (DPI/подсветка, протокол не документирован).
 
 - udev: `devices/udev/99-input-kit.rules` даёт `uaccess` на hidraw обоих
-  устройств.
+  устройств (имя файла историческое — чтобы не переустанавливать правило
+  в `/etc/udev/rules.d`, оно осталось прежним).
 - keyd: `devices/keyd/zelotes-c18.conf` — пер-девайсный ремап для
   `12c9:2003`. Джойстик переводится в стрелки, боковая кнопка удерживает слой
   `zelotes-c18`, вторая — макрос.
@@ -183,7 +188,7 @@ echo 1-5:1.1 | sudo tee /sys/bus/usb/drivers/usbhid/bind
 Установка системных файлов:
 
 ```bash
-sudo install -Dm644 devices/udev/99-input-kit.rules /etc/udev/rules.d/99-input-kit.rules
+sudo install -Dm644 devices/udev/99-input-kit.rules /etc/udev/rules.d/99-input-kit.rules  # имя прежнее, см. выше
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=hidraw
 

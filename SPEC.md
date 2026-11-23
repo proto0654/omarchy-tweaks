@@ -1,4 +1,4 @@
-# omarchy-input-kit
+# omarchy-tweaks
 
 Инструменты под конкретную машину: Omarchy 4.5 (Arch + Hyprland, Lua-конфиг),
 мышь **Zelotes C-18** (`12c9:2003`, «SOAI USB Gaming Mouse») и клавиатура
