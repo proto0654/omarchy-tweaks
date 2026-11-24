@@ -37,24 +37,13 @@
 
 ## 2. `switcher/` — конфликт хоткея свитчера с браузером
 
-Симптом: в Google Chrome (он под XWayland) нажатие `Shift+Pause`
-(свитчер `text-conv`) открывает DevTools. Причина: свитчер копирует выделение
-через `wtype`-инъекцию `Ctrl+C`, пока физический Shift ещё зажат — Chrome
-получает `Ctrl+Shift+C` = «Inspect element».
-
-Требования:
-
-- `bindings.snippet.lua` — те же хоткеи, но на **release**:
-  `o.bind("SHIFT + PAUSE", "...", "/home/proto/.local/bin/text-conv layout", { release = true })`
-  и аналогично `SHIFT + BREAK`, `ALT + PAUSE`, `ALT + BREAK`.
-  Объяснить в комментарии, почему release, а не press.
-- `conflicts.md` — таблица горячих клавиш Chrome/Chromium/Electron, в которые
-  может случайно попасть инъекция свитчера (`Ctrl+Shift+C` inspect,
-  `Ctrl+Shift+I` devtools, `Ctrl+Shift+J` console, `Ctrl+Shift+M` device mode,
-  `F12` devtools) и вывод: DevTools должен открываться **только по F12**,
-  остальные комбинации свитчер не должен задевать.
-- `verify.sh` — проверка на живой системе: `hyprctl binds -j` показывает
-  хоткей с `release`-флагом; `hyprctl configerrors` пусто.
+- `bindings.snippet.lua` — `Shift+Pause` / `Shift+Break` меняет раскладку
+  при отпускании, `Ctrl+Pause` меняет регистр при нажатии по кодам XKB
+  Pause (`127`) и Break (`419`). Модификаторы сопоставляются точно.
+- `conflicts.md` — объяснение конфликтов `Ctrl+Shift+C` в Chrome и Codex и
+  причины выбора Ctrl: `Ctrl+Alt+V` активирует голосовой чат Hermes.
+- `verify.sh` — проверка сочетаний и момента срабатывания в живом Hyprland,
+  а также проверка ошибок конфигурации.
 
 ## 3. `devices/` — что реально умеют Zelotes C-18 и DEXP First Blood
 

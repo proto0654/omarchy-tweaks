@@ -41,18 +41,10 @@ cd ~/projects/omarchy-tweaks
 
 ### switcher: сниппет не подключается сам
 
-`switcher/bindings.snippet.lua` — это **замена** четырёх press-строк, а не
-дополнительный файл. Если просто подключить его рядом со старыми привязками,
-сработают и press, и release. Поэтому:
-
-1. Откройте `~/.config/hypr/bindings.lua`.
-2. Найдите строки `SHIFT + PAUSE`, `SHIFT + BREAK`, `ALT + PAUSE`,
-   `ALT + BREAK` и замените их блоком из
-   `~/.config/hypr/bindings.snippet.lua`.
-3. Выполните `hyprctl reload`.
-
-После этого `bash switcher/verify.sh` увидит четыре привязки с
-`"release": true` и не найдёт press-дублей.
+Замените существующие привязки `text-conv` блоком из
+`~/.config/hypr/bindings.snippet.lua`. Удалите старые варианты для
+`Shift+Pause`, `Alt+Pause` и `Ctrl+Pause`, включая их варианты с Break.
+Выполните `hyprctl reload`, затем `bash switcher/verify.sh`.
 
 ## Проверка одной командой
 
@@ -76,8 +68,8 @@ bash telegram-webview/verify.sh
 - `lang-auto`: `python3 -m py_compile`, русская справка, `--once` на живом
   Hyprland, `--dry-run` без Traceback, unit-файл; состояние установленной
   службы выводится предупреждением.
-- `switcher`: `hyprctl -j binds` показывает `SHIFT/ALT + PAUSE/BREAK` с
-  release, press-дублей нет, `hyprctl -j configerrors` пуст.
+- `switcher`: Shift срабатывает при отпускании, Ctrl при нажатии. Проверка
+  также ищет дубли и ошибки конфигурации Hyprland.
 - `devices`: `udevadm verify`, наличие `uaccess` для обоих id, шаблон keyd
   (`keyd check`, если keyd установлен), 3 интерфейса мыши; у клавиатуры —
   минимум один hidraw и живое event-устройство, отсутствие второго
@@ -132,20 +124,14 @@ bash lang-auto/install.sh --uninstall
 
 ## 2. switcher
 
-Симптом: в Google Chrome под XWayland `Shift+Pause` (свитчер `text-conv`)
-открывает DevTools. `text-conv` копирует выделение через `wtype`, инжектируя
-`Ctrl+C`; если физический `Shift` ещё зажат, Chrome получает `Ctrl+Shift+C` —
-«Inspect element».
+Сниппет `switcher/bindings.snippet.lua` задаёт `Shift+Pause` для смены
+раскладки и `Ctrl+Pause` для инверсии регистра. Shift срабатывает при
+отпускании, чтобы физический модификатор с меньшей вероятностью открыл
+DevTools в Chrome. Ctrl срабатывает при нажатии. Удержанный Alt превращал
+вставку в `Ctrl+Alt+V` и запускал голосовой чат Hermes.
 
-Что сделано:
-
-- `bindings.snippet.lua` переносит четыре хоткея на **release** (с
-  `ignore_mods`, иначе release может не сработать после отпускания Shift);
-- `conflicts.md` — таблица горячих клавиш Chrome и вывод: DevTools должен
-  открываться только по `F12`;
-- `verify.sh` — проверка живого Hyprland.
-
-Подробности и таблица: `switcher/conflicts.md`.
+Подробности о Chrome и Codex описаны в `switcher/conflicts.md`. Живые
+привязки и ошибки конфигурации проверяет `switcher/verify.sh`.
 
 ## 3. devices
 
@@ -317,16 +303,9 @@ journalctl --user -u lang-auto.service -n 5 --no-pager
 Ожидается строка вида `переключил на us` или
 `раскладка уже us` и отсутствие повторяющихся ошибок `hyprctl` на каждое окно.
 
-**Снимок 3 — release-хоткеи.** Выполните:
-
-```bash
-hyprctl -j binds | python3 -m json.tool | grep -A2 '"key": "PAUSE"'
-```
-
-У четырёх нужных привязок (Shift/Alt × PAUSE/BREAK) должно быть
-`"release": true`. Затем откройте Chrome, выделите слово, нажмите
-`Shift+Pause`: текст меняет раскладку, DevTools не открывается. `F12`
-по-прежнему открывает DevTools — это ожидаемо.
+**Снимок 3 — хоткеи text-conv.** Выполните `bash switcher/verify.sh`.
+Затем выделите слово в поле ввода. `Shift+Pause` меняет раскладку,
+`Ctrl+Pause` инвертирует регистр. В Chrome при этом не открывается DevTools.
 
 **Снимок 4 — сетка «Приложений».** `SUPER+SPACE` → «Приложения». Верхние
 плитки — те, что чаще всего запускались из этой сетки, курсор стоит на первой.

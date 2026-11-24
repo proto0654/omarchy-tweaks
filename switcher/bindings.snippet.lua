@@ -1,22 +1,10 @@
--- Хоткеи правки выделенного текста на отпускание клавиши, а не на нажатие.
---
--- Почему release, а не press:
---   text-conv копирует выделение через wtype, инжектируя Ctrl+C. Если обработчик
---   срабатывает в момент нажатия Shift+Pause, физический Shift ещё зажат, и
---   Chrome под XWayland получает Ctrl+Shift+C — «Inspect element».
---   Привязка к отпусканию даёт шанс, что Shift уже отпущен; сам text-conv тоже
---   отпускает модификаторы перед инъекцией (wtype -m shift -m ctrl ...).
---   Это не отменяет правило: свитчер не должен посылать Ctrl+Shift+I/J/M.
---
--- ignore_mods нужен, потому что к моменту отпускания Pause маска модификаторов
--- уже может измениться (Shift отпущен раньше). Без него Hyprland просто не
--- увидит release-привязку.
---
--- Замените этими строками press-варианты в ~/.config/hypr/bindings.lua,
--- затем выполните: hyprctl reload
---
--- На клавише Pause с Shift XKB выдаёт keysym BREAK, поэтому дублируем оба имени.
-o.bind("SHIFT + PAUSE", "Сменить раскладку выделенного", "/home/proto/.local/bin/text-conv layout", { release = true, ignore_mods = true })
-o.bind("SHIFT + BREAK", "Сменить раскладку выделенного", "/home/proto/.local/bin/text-conv layout", { release = true, ignore_mods = true })
-o.bind("ALT + PAUSE", "Инвертировать регистр выделенного", "/home/proto/.local/bin/text-conv case", { release = true, ignore_mods = true })
-o.bind("ALT + BREAK", "Инвертировать регистр выделенного", "/home/proto/.local/bin/text-conv case", { release = true, ignore_mods = true })
+-- Shift+Pause — смена раскладки выделения, Ctrl+Pause — инверсия регистра.
+-- Для раскладки оставляем запуск при отпускании: в приложениях с wtype
+-- удержанный Shift может превратить Ctrl+C в Ctrl+Shift+C.
+o.bind("SHIFT + PAUSE", "Сменить раскладку выделенного", "/home/proto/.local/bin/text-conv layout", { release = true })
+o.bind("SHIFT + BREAK", "Сменить раскладку выделенного", "/home/proto/.local/bin/text-conv layout", { release = true })
+-- Ctrl может менять символ Pause на Break. Сопоставляем физические коды
+-- Pause и отдельной клавиши Break на нажатии, пока Ctrl ещё зажат.
+-- Alt с wtype превращал Ctrl+V в Ctrl+Alt+V и запускал голосовой чат Hermes.
+o.bind("CTRL + code:127", "Инвертировать регистр выделенного", "/home/proto/.local/bin/text-conv case")
+o.bind("CTRL + code:419", "Инвертировать регистр выделенного", "/home/proto/.local/bin/text-conv case")

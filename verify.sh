@@ -11,7 +11,7 @@ usage() {
 
 Запускает проверки:
   lang-auto/verify.sh  — синтаксис, справка и живой запуск демона;
-  switcher/verify.sh   — release-привязки в живом Hyprland;
+  switcher/verify.sh   — привязки раскладки и регистра в живом Hyprland;
   devices/verify.sh    — udev, keyd и наличие интерфейсов устройств;
   apps-by-usage/verify.sh — клон дока, патчи и включённый плагин;
   telegram-webview/verify.sh — конфиги мини-апок Telegram и окружение живого клиента.

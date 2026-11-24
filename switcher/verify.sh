@@ -11,9 +11,9 @@ usage() {
 использование: verify.sh
 
 Проверяет сниппет и живую конфигурацию Hyprland:
-  - в bindings.snippet.lua четыре привязки с release = true;
-  - hyprctl -j binds показывает SHIFT/ALT + PAUSE/BREAK с release;
-  - старых press-привязок на этих клавишах нет;
+  - SHIFT + PAUSE/BREAK срабатывают на отпускании;
+  - CTRL + code:127/419 срабатывают на нажатии;
+  - дублирующих и старых привязок нет;
   - hyprctl -j configerrors пуст.
 
 Параметры:
@@ -52,14 +52,7 @@ fi
 if [[ ! -f ${SNIPPET} ]]; then
   fail "нет файла ${SNIPPET}"
 else
-  release_count="$(grep -c 'release = true' "${SNIPPET}" || true)"
-  if [[ ${release_count} -ne 4 ]]; then
-    fail "в сниппете ${release_count} привязок release = true, ожидалось 4"
-  else
-    ok "в сниппете четыре привязки release = true"
-  fi
-
-  for combination in "SHIFT + PAUSE" "SHIFT + BREAK" "ALT + PAUSE" "ALT + BREAK"; do
+  for combination in "SHIFT + PAUSE" "SHIFT + BREAK" "CTRL + code:127" "CTRL + code:419"; do
     if ! grep -Fq "\"${combination}\"" "${SNIPPET}"; then
       fail "в сниппете нет привязки ${combination}"
     fi
@@ -69,61 +62,40 @@ fi
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf -- "${tmp_dir}"' EXIT
 
-if ! hyprctl -j binds >"${tmp_dir}/binds.json" 2>"${tmp_dir}/binds.err"; then
-  fail "hyprctl -j binds не сработал: $(tr '\n' ' ' <"${tmp_dir}/binds.err")"
+# Hyprland с Lua показывает code:N в текстовом выводе, даже когда в JSON
+# у такой привязки key пуст, а keycode равен нулю.
+if ! hyprctl binds >"${tmp_dir}/binds.txt" 2>"${tmp_dir}/binds.err"; then
+  fail "hyprctl binds не сработал: $(tr '\n' ' ' <"${tmp_dir}/binds.err")"
 else
-  if ! python3 - "${tmp_dir}/binds.json" <<'PY'
-import json
+  if ! python3 - "${tmp_dir}/binds.txt" <<'PYVERIFY'
+from collections import Counter
+from pathlib import Path
+import re
 import sys
 
-try:
-    with open(sys.argv[1], encoding="utf-8") as handle:
-        binds = json.load(handle)
-except (OSError, json.JSONDecodeError) as exc:
-    print(f"FAIL: не удалось разобрать hyprctl -j binds: {exc}", file=sys.stderr)
-    raise SystemExit(1)
-
-if not isinstance(binds, list):
-    print("FAIL: hyprctl -j binds вернул не список", file=sys.stderr)
-    raise SystemExit(1)
-
-# modmask: Shift = 1, Alt = 8 (так их печатает Hyprland).
-expected = {("PAUSE", 1), ("BREAK", 1), ("PAUSE", 8), ("BREAK", 8)}
-release_found = set()
-press_found = set()
-
-for bind in binds:
-    if not isinstance(bind, dict):
+expected = Counter({(1, 'PAUSE', True): 1, (1, 'BREAK', True): 1,
+                    (4, 'CODE:127', False): 1, (4, 'CODE:419', False): 1})
+found = Counter()
+output = Path(sys.argv[1]).read_text(encoding='utf-8')
+for entry in re.split(r'(?m)(?=^bind[a-z]*$)', output):
+    flags = re.match(r'bind([a-z]*)\n', entry)
+    mask = re.search(r'(?m)^\s*modmask: (\d+)$', entry)
+    key = re.search(r'(?m)^\s*key: (.+)$', entry)
+    if not (flags and mask and key):
         continue
-    key = str(bind.get("key") or "")
-    if key not in ("PAUSE", "BREAK"):
-        continue
-    mask = bind.get("modmask")
-    if mask not in (1, 8):
-        continue
-    pair = (key, mask)
-    if bind.get("release") is True:
-        release_found.add(pair)
-    else:
-        press_found.add(pair)
+    mask = int(mask[1])
+    name = key[1].split('+')[-1].strip().upper()
+    if mask in (1, 4, 8) and name in ('PAUSE', 'BREAK', 'XF86BREAK', 'CODE:127', 'CODE:419'):
+        found[(mask, name, 'r' in flags[1])] += 1
 
-missing = sorted(expected - release_found)
-if missing:
-    names = ", ".join(f"{key} (modmask {mask})" for key, mask in missing)
-    print(f"FAIL: нет release-привязок: {names}", file=sys.stderr)
-    print("      добавьте блок из bindings.snippet.lua в ~/.config/hypr/bindings.lua", file=sys.stderr)
-    print("      и выполните: hyprctl reload", file=sys.stderr)
-
-if press_found:
-    names = ", ".join(f"{key} (modmask {mask})" for key, mask in sorted(press_found))
-    print(f"FAIL: старые press-привязки всё ещё загружены: {names}", file=sys.stderr)
-    print("      они сработают вместе с release-привязками; оставьте только release", file=sys.stderr)
-
-if missing or press_found:
+for (mask, name, release), count in (expected - found).items():
+    print(f'FAIL: отсутствует привязка {name} (modmask={mask}, release={release})', file=sys.stderr)
+for (mask, name, release), count in (found - expected).items():
+    print(f'FAIL: лишних привязок {name} (modmask={mask}, release={release}): {count}', file=sys.stderr)
+if found != expected:
     raise SystemExit(1)
-
-print("OK: release-привязки SHIFT/ALT + PAUSE/BREAK загружены, press-дублей нет")
-PY
+print('OK: Shift срабатывает на отпускании, Ctrl на нажатии, дублей нет')
+PYVERIFY
   then
     status=1
   fi
