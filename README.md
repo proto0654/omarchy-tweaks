@@ -8,11 +8,12 @@
 каталог со своим `install.sh`/`verify.sh`, общие скрипты в корне прогоняют их
 все. Части независимы: можно поставить одну.
 
-Пять частей:
+Шесть частей:
 
 | Каталог | Задача | Что ставится |
 |---|---|---|
 | `lang-auto/` | английская раскладка при открытии терминала или меню Omarchy | `~/.local/bin/lang-auto`, user unit |
+| `scrolling/` | управление шириной колонки и направлением scrolling | сниппеты для `~/.config/hypr/` |
 | `switcher/` | убрать конфликт `Shift+Pause` с DevTools в Chrome | сниппет для `~/.config/hypr/bindings.lua` |
 | `devices/` | udev, keyd и документация по обеим устройствам | правило udev, шаблон keyd, docs |
 | `apps-by-usage/` | сетка «Приложения» в стартовом меню: сортировка по частоте запусков | клон плагина `omarchy.dock` + два патча |
@@ -45,6 +46,19 @@ cd ~/projects/omarchy-tweaks
 `~/.config/hypr/bindings.snippet.lua`. Удалите старые варианты для
 `Shift+Pause`, `Alt+Pause` и `Ctrl+Pause`, включая их варианты с Break.
 Выполните `hyprctl reload`, затем `bash switcher/verify.sh`.
+
+### scrolling: управление лентой
+
+Добавьте содержимое `scrolling/bindings.snippet.lua` в `~/.config/hypr/bindings.lua`,
+а `scrolling/looknfeel.snippet.lua` — в `~/.config/hypr/looknfeel.lua`, затем
+выполните `hyprctl reload` и `hyprctl configerrors`. На этой машине они уже добавлены.
+`Super+Alt+W` переключает ширину активной колонки между 50% и 100%,
+`Super+Alt+V` меняет направление ленты между `right` и `down`. Бинды
+предназначены для рабочих пространств с layout `scrolling`; по умолчанию здесь
+используется `dwindle`. Направление сбрасывается при перезагрузке конфигурации.
+Hyprland 0.56 с Lua использует `hl.config`, поскольку `hyprctl keyword` здесь
+не поддерживается. При одной колонке её видимая ширина может определяться
+настройкой `scrolling.fullscreen_on_one_column`.
 
 ## Проверка одной командой
 
